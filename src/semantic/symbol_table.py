@@ -92,13 +92,14 @@ class ClassTable:
         # (2) build each ClassInfo, resolving field/method types now that every
         #     class name is known (so forward references resolve).
         for c in program.classes:
-            self.classes[c.name] = self._build_class_info(c, known)
+            self.classes[c.name] = self._build_class_info(c)
 
         # (3) validate the inheritance graph: known parents, no cycles.
         self._check_inheritance()
         return self
 
-    def _resolve_type(self, typeref, known):
+    def resolve_type(self, typeref):
+        """Map an AST TypeRef to a semantic Type (raises on unknown class name)."""
         n = typeref.name
         if n == "int":
             return INT
@@ -106,11 +107,11 @@ class ClassTable:
             return BOOLEAN
         if n == "void":
             return VOID
-        if n in known:
+        if n in self.classes:
             return ClassType(n)
         raise SemanticError(f"unknown type '{n}'", typeref.line, typeref.col)
 
-    def _build_class_info(self, c, known):
+    def _build_class_info(self, c):
         fields: Dict[str, FieldInfo] = {}
         for f in c.fields:
             if f.name in fields:
@@ -118,7 +119,7 @@ class ClassTable:
                     f"field '{f.name}' is already defined in class {c.name}",
                     f.line, f.col,
                 )
-            ftype = self._resolve_type(f.type, known)
+            ftype = self.resolve_type(f.type)
             if ftype == VOID:
                 raise SemanticError("a field cannot have type 'void'", f.line, f.col)
             fields[f.name] = FieldInfo(f.name, ftype, f.is_static, c.name, f.line, f.col)
@@ -130,13 +131,13 @@ class ClassTable:
                     f"method '{m.name}' is already defined in class {c.name}",
                     m.line, m.col,
                 )
-            rtype = self._resolve_type(m.return_type, known)
+            rtype = self.resolve_type(m.return_type)
             ptypes = []
             for p in m.params:
                 if p.is_array:
                     ptypes.append(STRING_ARRAY)   # only main's `String[] args`
                 else:
-                    ptypes.append(self._resolve_type(p.type, known))
+                    ptypes.append(self.resolve_type(p.type))
             pnames = [p.name for p in m.params]
             methods[m.name] = MethodInfo(
                 m.name, rtype, ptypes, pnames, m.is_static, m.is_public,
