@@ -210,13 +210,13 @@ def flatten_expr(expr, out, namer, ctx=None):
 
     if isinstance(expr, ast.Assignment):
         value = flatten_expr(expr.value, out, namer, ctx)
+        if ctx is not None:
+            return ctx.flatten_assignment(expr.target, value, out)
         target = expr.target
         if isinstance(target, ast.Identifier) and target.binding[0] == "local":
             dst = Name(target.binding[1].c_name)
             out.append(Assign(dst, value))
             return dst
-        if ctx is not None:
-            return ctx.flatten_assign_target(target, value, out)
         raise NotImplementedError("non-local assignment needs a codegen context")
 
     if ctx is not None:
