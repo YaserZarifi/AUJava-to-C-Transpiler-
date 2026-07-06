@@ -259,6 +259,15 @@ class Analyzer:
             raise SemanticError("'this' cannot be used in a static method", e.line, e.col)
         return ClassType(self.current_class.name)
 
+    def _is_class_ref(self, ident):
+        """True if a bare identifier names a class (not shadowed by a var/field)."""
+        name = ident.name
+        if self.scopes.lookup(name) is not None:
+            return False
+        if self.ct.lookup_field(self.current_class.name, name) is not None:
+            return False
+        return self.ct.exists(name)
+
     def _expr_identifier(self, e):
         info = self.scopes.lookup(e.name)
         if info is not None:
@@ -266,7 +275,10 @@ class Analyzer:
             return info.type
         fi = self.ct.lookup_field(self.current_class.name, e.name)
         if fi is not None:
-            if self.current_method.is_static and not fi.is_static:
+            if fi.is_static:
+                e.binding = ("static_field", fi)
+                return fi.type
+            if self.current_method.is_static:
                 raise SemanticError(
                     f"cannot access instance field '{e.name}' from a static method",
                     e.line, e.col,
@@ -281,6 +293,18 @@ class Analyzer:
         return ClassType(e.class_name)
 
     def _expr_field(self, e):
+        # static field access: ClassName.field
+        if isinstance(e.receiver, ast.Identifier) and self._is_class_ref(e.receiver):
+            cname = e.receiver.name
+            fi = self.ct.lookup_field(cname, e.name)
+            if fi is None or not fi.is_static:
+                raise SemanticError(
+                    f"class {cname} has no static field '{e.name}'", e.line, e.col
+                )
+            e.field_info = fi
+            e.receiver_type = ClassType(cname)
+            return fi.type
+
         rtype = self._expr(e.receiver)
         if not isinstance(rtype, ClassType):
             raise SemanticError(f"type {rtype} has no fields", e.line, e.col)
@@ -289,17 +313,54 @@ class Analyzer:
             raise SemanticError(
                 f"class {rtype.name} has no field '{e.name}'", e.line, e.col
             )
+        if fi.is_static:
+            raise SemanticError(
+                f"static field '{e.name}' must be accessed via the class name",
+                e.line, e.col,
+            )
         e.field_info = fi
         e.receiver_type = rtype
         return fi.type
 
+    def _check_args(self, e, mi):
+        if len(e.args) != len(mi.param_types):
+            raise SemanticError(
+                f"method '{e.name}' expects {len(mi.param_types)} argument(s) "
+                f"but got {len(e.args)}",
+                e.line, e.col,
+            )
+        for i, (arg, pt) in enumerate(zip(e.args, mi.param_types), start=1):
+            at = self._expr(arg)
+            if not self.ct.is_assignable(pt, at):
+                raise SemanticError(
+                    f"argument {i} of '{e.name}' expects {pt} but got {at}",
+                    arg.line, arg.col,
+                )
+
     def _expr_call(self, e):
+        # static method call: ClassName.method(args)
+        if (
+            e.receiver is not None
+            and isinstance(e.receiver, ast.Identifier)
+            and self._is_class_ref(e.receiver)
+        ):
+            cname = e.receiver.name
+            mi = self.ct.lookup_method(cname, e.name)
+            if mi is None or not mi.is_static:
+                raise SemanticError(
+                    f"class {cname} has no static method '{e.name}'", e.line, e.col
+                )
+            self._check_args(e, mi)
+            e.method_info = mi
+            e.receiver_type = ClassType(cname)
+            return mi.return_type
+
         if e.receiver is None:
-            # bare call => implicit `this`
+            # bare call => implicit `this`, or a static method of the current class
             mi = self.ct.lookup_method(self.current_class.name, e.name)
             if mi is None:
                 raise SemanticError(f"method '{e.name}' is not defined", e.line, e.col)
-            if self.current_method.is_static and not mi.is_static:
+            if not mi.is_static and self.current_method.is_static:
                 raise SemanticError(
                     f"cannot call instance method '{e.name}' from a static method",
                     e.line, e.col,
@@ -314,20 +375,13 @@ class Analyzer:
                 raise SemanticError(
                     f"class {recv_type.name} has no method '{e.name}'", e.line, e.col
                 )
-
-        if len(e.args) != len(mi.param_types):
-            raise SemanticError(
-                f"method '{e.name}' expects {len(mi.param_types)} argument(s) "
-                f"but got {len(e.args)}",
-                e.line, e.col,
-            )
-        for i, (arg, pt) in enumerate(zip(e.args, mi.param_types), start=1):
-            at = self._expr(arg)
-            if not self.ct.is_assignable(pt, at):
+            if mi.is_static:
                 raise SemanticError(
-                    f"argument {i} of '{e.name}' expects {pt} but got {at}",
-                    arg.line, arg.col,
+                    f"static method '{e.name}' must be called via the class name",
+                    e.line, e.col,
                 )
+
+        self._check_args(e, mi)
         e.method_info = mi
         e.receiver_type = recv_type
         return mi.return_type

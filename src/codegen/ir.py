@@ -144,6 +144,14 @@ class MethodCallInstr(Instr):
     args: list
 
 
+@dataclass
+class StaticCallInstr(Instr):
+    """[dst =] ClassName_method(args...);   -- a static method has no caller."""
+    dst: Optional[Operand]
+    func: str                     # e.g. "Counter_increment"
+    args: list
+
+
 # --------------------------------------------------------------------------
 # Name/label allocation
 # --------------------------------------------------------------------------

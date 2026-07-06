@@ -78,6 +78,19 @@ class Emitter:
             out.append(f"typedef struct {c.name} {c.name};")
         out.append("")
 
+        # static fields become globals, prefixed with their class name
+        static_globals = [
+            (c.name, fname, fi)
+            for c in classes
+            for fname, fi in self.ct.get(c.name).fields.items()
+            if fi.is_static
+        ]
+        for cname, fname, fi in static_globals:
+            init = "NULL" if isinstance(fi.type, ClassType) else "0"
+            out.append(f"{c_type(fi.type)} {cname}_{fname} = {init};")
+        if static_globals:
+            out.append("")
+
         # Struct bodies must be emitted parent-before-child: a child embeds its
         # parent by value (`A super;`), which needs the parent's complete type.
         # (Object-typed fields are pointers, so the forward typedefs above cover
@@ -86,10 +99,14 @@ class Emitter:
             out.append(self._render_struct(c))
             out.append("")
 
+        # prototypes: constructors, instance methods, and static methods
         for c in classes:
             out.append(f"{c.name} *new_{c.name}(void);")
             for m in c.methods:
-                out.append(self._method_signature(c, m) + ";")
+                if m.is_static:
+                    out.append(self._static_signature(c, m) + ";")
+                else:
+                    out.append(self._method_signature(c, m) + ";")
         out.append("")
 
         for c in classes:
@@ -98,7 +115,10 @@ class Emitter:
 
         for c in classes:
             for m in c.methods:
-                out.append(self._render_method(c, m))
+                if m.is_static:
+                    out.append(self._render_static_method(c, m))
+                else:
+                    out.append(self._render_method(c, m))
                 out.append("")
 
         out.append(self._render_main(entry_class, main))
@@ -166,8 +186,12 @@ class Emitter:
         if c.superclass:
             lines.append(f"    {c.superclass} super;")   # embedded parent, first
         for fname, fi in ci.fields.items():
+            if fi.is_static:
+                continue                                  # static fields are globals
             lines.append(f"    {c_type(fi.type)} {fname};")
         for mi in ci.methods.values():
+            if mi.is_static:
+                continue                                  # static methods are plain functions
             lines.append(f"    {self._method_ptr_field(mi)};")
         lines.append("};")
         return "\n".join(lines)
@@ -179,18 +203,22 @@ class Emitter:
         lines = [f"{c.name} *new_{c.name}(void) {{"]
         lines.append(f"    {c.name} *instance = ({c.name} *)malloc(sizeof({c.name}));")
 
-        # default-initialize every field at every inheritance level
+        # default-initialize every (instance) field at every inheritance level
         for depth, cls in enumerate(ancestry):
             prefix = "super." * depth
             for fname, fi in self.ct.get(cls).fields.items():
+                if fi.is_static:
+                    continue
                 init = "NULL" if isinstance(fi.type, ClassType) else "0"
                 lines.append(f"    instance->{prefix}{fname} = {init};")
 
-        # wire up method pointers; an override is propagated to the child level
-        # AND to every ancestor level that declares the method.
+        # wire up (instance) method pointers; an override is propagated to the
+        # child level AND to every ancestor level that declares the method.
         for depth, cls in enumerate(ancestry):
             prefix = "super." * depth
-            for mname in self.ct.get(cls).methods:
+            for mname, mi in self.ct.get(cls).methods.items():
+                if mi.is_static:
+                    continue
                 impl = self._effective_impl(c.name, mname)
                 lines.append(
                     f"    instance->{prefix}function_{mname} = {impl}_function_{mname};"
@@ -228,6 +256,36 @@ class Emitter:
 
         lines = [self._method_signature(c, m) + " {"]
         lines.append(f"    {c.name} *_self = ({c.name} *)_caller;")
+        lines.extend(self._decl_lines(instrs, decls))
+        lines.append("")
+        for ins in instrs:
+            lines.append("    " + self._render_instr(ins))
+        lines.append("}")
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------ static methods
+
+    def _static_signature(self, c, m):
+        mi = self.ct.get(c.name).methods[m.name]
+        ret = c_type(mi.return_type)
+        params = [f"{c_type(pt)} {self._param_c_name(m, idx)}"
+                  for idx, pt in enumerate(mi.param_types)]
+        param_list = ", ".join(params) if params else "void"
+        return f"{ret} {c.name}_{m.name}({param_list})"
+
+    def _render_static_method(self, c, m):
+        ci = self.ct.get(c.name)
+        mi = ci.methods[m.name]
+        for idx, pinfo in enumerate(getattr(m, "param_infos", [])):
+            if pinfo is not None:
+                pinfo.c_name = self._param_c_name(m, idx)
+
+        self.current_class = ci
+        self.self_name = None            # static: no `this`
+        self.current_return_type = mi.return_type
+        instrs, decls = self._lower_body(m, is_main=False)
+
+        lines = [self._static_signature(c, m) + " {"]
         lines.extend(self._decl_lines(instrs, decls))
         lines.append("")
         for ins in instrs:
@@ -364,14 +422,19 @@ class Emitter:
             out.append(ir.NewInstr(t, expr.class_name))
             return t
         if isinstance(expr, ast.FieldAccess):
+            fi = expr.field_info
+            if fi.is_static:
+                return ir.Raw(f"{fi.owner}_{fi.name}")
             recv = ir.flatten_expr(expr.receiver, out, self.namer, ctx=self)
-            return ir.Raw(self._field_member(expr.receiver_type.name, expr.field_info, recv.c))
+            return ir.Raw(self._field_member(expr.receiver_type.name, fi, recv.c))
         if isinstance(expr, ast.MethodCall):
             return self._flatten_call(expr, out)
         raise CodeGenError(f"cannot lower expression {type(expr).__name__}")
 
     def flatten_field_operand(self, identifier, out):
         fi = identifier.binding[1]
+        if fi.is_static:
+            return ir.Raw(f"{fi.owner}_{fi.name}")
         return ir.Raw(self._field_member(self.current_class.name, fi, self.self_name))
 
     def flatten_assignment(self, target, value, out):
@@ -381,31 +444,55 @@ class Emitter:
                 dst = ir.Name(info.c_name)
                 out.append(ir.Assign(dst, self._coerce(value, info.type)))
                 return dst
+            if kind == "static_field":
+                member = f"{info.owner}_{info.name}"
+                out.append(ir.Assign(ir.Raw(member), self._coerce(value, info.type)))
+                return ir.Raw(member)
             member = self._field_member(self.current_class.name, info, self.self_name)
             out.append(ir.Assign(ir.Raw(member), self._coerce(value, info.type)))
             return ir.Raw(member)
         if isinstance(target, ast.FieldAccess):
-            recv = ir.flatten_expr(target.receiver, out, self.namer, ctx=self)
             fi = target.field_info
+            if fi.is_static:
+                member = f"{fi.owner}_{fi.name}"
+                out.append(ir.Assign(ir.Raw(member), self._coerce(value, fi.type)))
+                return ir.Raw(member)
+            recv = ir.flatten_expr(target.receiver, out, self.namer, ctx=self)
             member = self._field_member(target.receiver_type.name, fi, recv.c)
             out.append(ir.Assign(ir.Raw(member), self._coerce(value, fi.type)))
             return ir.Raw(member)
         raise CodeGenError("invalid assignment target")
 
+    def _coerced_args(self, e, mi, out):
+        return [
+            self._coerce(ir.flatten_expr(a, out, self.namer, ctx=self), pt)
+            for a, pt in zip(e.args, mi.param_types)
+        ]
+
     def _flatten_call(self, e, out):
+        mi = e.method_info
+
+        if mi.is_static:
+            args = self._coerced_args(e, mi, out)
+            func = f"{mi.owner}_{e.name}"
+            if mi.return_type == VOID:
+                out.append(ir.StaticCallInstr(None, func, args))
+                return None
+            t = self.namer.new_temp()
+            self.temp_types[t.id] = c_type(mi.return_type)
+            out.append(ir.StaticCallInstr(t, func, args))
+            return t
+
+        # instance call: evaluate the receiver first, then the arguments
         if e.receiver is None:
             recv = ir.Name(self.self_name)
             static_name = self.current_class.name
         else:
             recv = ir.flatten_expr(e.receiver, out, self.namer, ctx=self)
             static_name = e.receiver_type.name
+        args = self._coerced_args(e, mi, out)
         depth = self._declarer_depth(static_name, e.name)
         method_c = ("super." * depth) + f"function_{e.name}"
-        mi = e.method_info
-        args = [
-            self._coerce(ir.flatten_expr(a, out, self.namer, ctx=self), pt)
-            for a, pt in zip(e.args, mi.param_types)
-        ]
         if mi.return_type == VOID:
             out.append(ir.MethodCallInstr(None, recv, method_c, args))
             return None
@@ -433,6 +520,8 @@ class Emitter:
                 note(ins.dst)
             elif isinstance(ins, ir.MethodCallInstr) and ins.dst is not None:
                 note(ins.dst)
+            elif isinstance(ins, ir.StaticCallInstr) and ins.dst is not None:
+                note(ins.dst)
         return seen
 
     def _render_instr(self, ins):
@@ -459,6 +548,9 @@ class Emitter:
         if isinstance(ins, ir.MethodCallInstr):
             call_args = ", ".join([ins.receiver.c] + [a.c for a in ins.args])
             call = f"{ins.receiver.c}->{ins.method_c}({call_args})"
+            return f"{ins.dst.c} = {call};" if ins.dst is not None else f"{call};"
+        if isinstance(ins, ir.StaticCallInstr):
+            call = f"{ins.func}({', '.join(a.c for a in ins.args)})"
             return f"{ins.dst.c} = {call};" if ins.dst is not None else f"{call};"
         raise CodeGenError(f"cannot render instruction {type(ins).__name__}")
 
