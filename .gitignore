@@ -1,0 +1,38 @@
+# ---- Java ----
+*.class
+*.jar
+*.war
+*.ear
+*.log
+target/
+build/
+bin/
+out/
+.gradle/
+hs_err_pid*
+replay_pid*
+
+# ---- C ----
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+*.gch
+*.d
+
+# ---- Editors / IDEs ----
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
