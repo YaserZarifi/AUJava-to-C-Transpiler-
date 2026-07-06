@@ -160,3 +160,82 @@ def test_e2e_nested_break_continue_affect_innermost_only():
         "}"
     )
     assert run_main(body) == "2\n-1\n2\n-2\n"
+
+
+# ------------------------------------------------------- Phase 7: classes / objects
+
+def run_program(src):
+    """Transpile a full program source, compile & run it, return stdout."""
+    program = parse(src)
+    errors = analyze(program)
+    assert errors == [], "; ".join(str(e) for e in errors)
+    return compile_and_run(generate(program))
+
+
+@requires_gcc
+def test_e2e_object_field_and_method():
+    src = (
+        "class A { int a; int test(int d) { return a * d; } } "
+        "public class Main { public static void main(String[] args) { "
+        "  A obj = new A(); obj.a = 5; System.out.println(obj.test(10)); } }"
+    )
+    assert run_program(src) == "50\n"
+
+
+@requires_gcc
+def test_e2e_this_field_vs_local_spec_example():
+    # The spec's exact `this` example: field i=100, local i=200.
+    src = (
+        "class A { int i; void test() { "
+        "  i = 100; int i = 200; "
+        "  System.out.println(i); System.out.println(this.i); } } "
+        "public class Main { public static void main(String[] args) { "
+        "  A a = new A(); a.test(); } }"
+    )
+    assert run_program(src) == "200\n100\n"
+
+
+@requires_gcc
+def test_e2e_method_calls_another_method_forward():
+    # foo calls bar, which is declared later (implicit-this call).
+    src = (
+        "class B { int foo(int n) { return bar(n); } int bar(int m) { return m + 1; } } "
+        "public class Main { public static void main(String[] args) { "
+        "  B b = new B(); System.out.println(b.foo(41)); } }"
+    )
+    assert run_program(src) == "42\n"
+
+
+@requires_gcc
+def test_e2e_object_reference_field_and_forward_class():
+    # Node.next is an object reference to a class; chained field access.
+    src = (
+        "class Node { int val; Node next; } "
+        "public class Main { public static void main(String[] args) { "
+        "  Node a = new Node(); a.val = 7; "
+        "  Node b = new Node(); b.val = 9; "
+        "  a.next = b; System.out.println(a.next.val); } }"
+    )
+    assert run_program(src) == "9\n"
+
+
+@requires_gcc
+def test_e2e_object_equality_is_pointer_comparison():
+    src = (
+        "class P {} "
+        "public class Main { public static void main(String[] args) { "
+        "  P x = new P(); P y = x; P z = new P(); "
+        "  System.out.println(x == y); System.out.println(x == z); } }"
+    )
+    assert run_program(src) == "true\nfalse\n"
+
+
+@requires_gcc
+def test_e2e_class_used_before_defined():
+    # Main uses class Helper before it is textually defined -- any order allowed.
+    src = (
+        "public class Main { public static void main(String[] args) { "
+        "  Helper h = new Helper(); System.out.println(h.twice(21)); } } "
+        "class Helper { int twice(int n) { return n + n; } }"
+    )
+    assert run_program(src) == "42\n"

@@ -120,8 +120,18 @@ class Analyzer:
         self.scopes = ScopeStack()
         self.scopes.push()   # method-level scope holds the parameters
         mi = self.current_method
+        param_infos = []
         for pname, ptype in zip(mi.param_names, mi.param_types):
-            self._record(self.scopes.define, pname, ptype, method_node.line, method_node.col)
+            try:
+                param_infos.append(
+                    self.scopes.define(pname, ptype, method_node.line, method_node.col)
+                )
+            except SemanticError as e:
+                self.errors.append(e)
+                param_infos.append(None)
+        # Expose the parameters' VarInfo objects so the code generator can assign
+        # them unique C names (identifiers referencing a param share these objects).
+        method_node.param_infos = param_infos
         self._record(self._stmt, method_node.body)
         self.scopes.pop()
 

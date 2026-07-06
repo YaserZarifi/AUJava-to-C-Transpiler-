@@ -61,6 +61,16 @@ class Name(Operand):
         return self.c_name
 
 
+@dataclass(frozen=True)
+class Raw(Operand):
+    """Arbitrary C text used as a value, e.g. a field access `obj->field`."""
+    text: str
+
+    @property
+    def c(self):
+        return self.text
+
+
 # --------------------------------------------------------------------------
 # Instructions
 # --------------------------------------------------------------------------
@@ -116,6 +126,22 @@ class Print(Instr):
 @dataclass
 class Return(Instr):
     value: Optional[Operand]
+
+
+@dataclass
+class NewInstr(Instr):
+    """dst = new_ClassName();  -- allocate & initialize an object."""
+    dst: Operand
+    class_name: str
+
+
+@dataclass
+class MethodCallInstr(Instr):
+    """[dst =] receiver->method_c(receiver, args...);"""
+    dst: Optional[Operand]        # None for a void call used as a statement
+    receiver: Operand
+    method_c: str                 # e.g. "function_test"
+    args: list
 
 
 # --------------------------------------------------------------------------
