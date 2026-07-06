@@ -54,4 +54,7 @@ docs/                grammar (EBNF) and project report
 
 ## Status
 
-Under active development, built in phases. See progress in the git history.
+Feature-complete: all mandatory stages (lexer, parser, semantic analyzer, code
+generator) plus the bonus features (inheritance/polymorphism and static
+fields/methods). See `docs/report.md` for the full design write-up and the git
+history for the phase-by-phase progression.
