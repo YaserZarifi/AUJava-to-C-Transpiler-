@@ -36,3 +36,6 @@ replay_pid*
 # ---- OS ----
 .DS_Store
 Thumbs.db
+
+# ---- Project-local planning docs ----
+AUJava-to-C-Roadmap.md
