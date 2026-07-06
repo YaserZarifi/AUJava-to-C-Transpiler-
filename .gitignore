@@ -37,5 +37,6 @@ replay_pid*
 .DS_Store
 Thumbs.db
 
-# ---- Project-local planning docs ----
+# ---- Project-local planning / assignment docs ----
 AUJava-to-C-Roadmap.md
+Compiler-04-2-FinalProject.pdf
