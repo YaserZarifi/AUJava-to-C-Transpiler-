@@ -142,11 +142,14 @@ class Namer:
 # Expression flattening
 # --------------------------------------------------------------------------
 
-def flatten_expr(expr, out, namer):
+def flatten_expr(expr, out, namer, ctx=None):
     """Flatten `expr` into TAC, appending instructions to `out`.
 
     Returns the Operand holding the expression's result. Every literal and every
-    operation produces its own temporary, matching the spec's TAC example.
+    operation produces its own temporary, matching the spec's TAC example. `ctx`
+    is an optional code-generation context used by later phases to lower object
+    operands (fields, calls, `new`, `this`); the pure arithmetic core does not
+    need it.
     """
     if isinstance(expr, ast.IntLiteral):
         t = namer.new_temp()
@@ -159,17 +162,39 @@ def flatten_expr(expr, out, namer):
         return t
 
     if isinstance(expr, ast.UnaryOp):
-        operand = flatten_expr(expr.operand, out, namer)
+        operand = flatten_expr(expr.operand, out, namer, ctx)
         t = namer.new_temp()
         out.append(UnOp(t, expr.op, operand))
         return t
 
     if isinstance(expr, ast.BinaryOp):
-        left = flatten_expr(expr.left, out, namer)
-        right = flatten_expr(expr.right, out, namer)
+        left = flatten_expr(expr.left, out, namer, ctx)
+        right = flatten_expr(expr.right, out, namer, ctx)
         t = namer.new_temp()
         out.append(BinOp(t, expr.op, left, right))
         return t
+
+    if isinstance(expr, ast.Identifier):
+        kind, info = expr.binding
+        if kind == "local":
+            return Name(info.c_name)
+        if ctx is not None:
+            return ctx.flatten_field_operand(expr, out)   # implicit-this field
+        raise NotImplementedError("field identifier needs a codegen context")
+
+    if isinstance(expr, ast.Assignment):
+        value = flatten_expr(expr.value, out, namer, ctx)
+        target = expr.target
+        if isinstance(target, ast.Identifier) and target.binding[0] == "local":
+            dst = Name(target.binding[1].c_name)
+            out.append(Assign(dst, value))
+            return dst
+        if ctx is not None:
+            return ctx.flatten_assign_target(target, value, out)
+        raise NotImplementedError("non-local assignment needs a codegen context")
+
+    if ctx is not None:
+        return ctx.flatten_object_expr(expr, out)   # This/New/FieldAccess/MethodCall
 
     raise NotImplementedError(
         f"flatten_expr does not yet handle {type(expr).__name__} "
