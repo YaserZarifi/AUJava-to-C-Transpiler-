@@ -1,5 +1,7 @@
+class A { void test(int a) {} }
 public class Main {
   public static void main(String[] args) {
-    System.out.println(1 + 2 * 3);
+    A a = new A();
+    a.test(1, 2);
   }
 }

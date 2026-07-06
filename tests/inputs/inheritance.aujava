@@ -1,0 +1,14 @@
+class Animal {
+  int legs() { return 4; }
+}
+class Bird extends Animal {
+  int legs() { return 2; }
+}
+public class Main {
+  public static void main(String[] args) {
+    Animal a = new Bird();
+    System.out.println(a.legs());
+    Animal a2 = new Animal();
+    System.out.println(a2.legs());
+  }
+}

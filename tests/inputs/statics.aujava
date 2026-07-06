@@ -1,0 +1,11 @@
+class Counter {
+  static int count;
+  static void inc() { count = count + 1; }
+}
+public class Main {
+  public static void main(String[] args) {
+    Counter.inc();
+    Counter.inc();
+    System.out.println(Counter.count);
+  }
+}

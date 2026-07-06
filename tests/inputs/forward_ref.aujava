@@ -1,0 +1,14 @@
+class B {
+  int foo(int n) { return bar(n); }
+  int bar(int m) { return m + 1; }
+  A make() { A a = new A(); return a; }
+}
+class A { int who() { return 99; } }
+public class Main {
+  public static void main(String[] args) {
+    B b = new B();
+    System.out.println(b.foo(41));
+    A a = b.make();
+    System.out.println(a.who());
+  }
+}

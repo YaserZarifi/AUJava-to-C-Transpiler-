@@ -1,0 +1,9 @@
+// a single-line comment at the top
+public class Main {
+  /* a
+     multi-line comment */
+  public static void main(String[] args) {
+    int x = 10; // inline comment
+    /* mid */ System.out.println(x);
+  }
+}

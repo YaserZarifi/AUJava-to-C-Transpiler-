@@ -1,0 +1,11 @@
+class A { int v() { return 1; } }
+class B extends A { }
+class C extends B { int v() { return 3; } }
+public class Main {
+  public static void main(String[] args) {
+    A a = new C();
+    System.out.println(a.v());
+    B b = new C();
+    System.out.println(b.v());
+  }
+}
